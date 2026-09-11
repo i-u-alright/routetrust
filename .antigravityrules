@@ -1,0 +1,27 @@
+# Antigravity AI Project Rules: RouteTrust
+
+## Project Mission
+RouteTrust is a probabilistic transit reliability and leave-by advisor built using LightGBM quantile regression (tau = 0.10, 0.50, 0.90), FastAPI, Streamlit, and SQLite in WAL mode.
+
+## Ground Truth Documentation
+Always refer to and adhere strictly to the specification files located in `/docs`:
+- docs/01-Product-Requirements.md
+- docs/02-Technical-Architecture.md
+- docs/03-Security-Access.md
+- docs/04-Frontend-Spec.md
+- docs/feature_list.md
+
+## Architecture & Code Standards
+- Python Version: 3.11.
+- Backend: FastAPI with Pydantic v2 schemas and SQLAlchemy 2.0 ORM.
+- Frontend: Streamlit running on port 7860 communicating via HTTP loopback to FastAPI on port 8000.
+- Database: SQLite (routetrust.db) strictly configured with PRAGMA journal_mode=WAL; and busy_timeout=15000.
+- Machine Learning: LightGBM Quantile Regressors (objective="quantile") with monotonic rearrangement sorting to guarantee Q10 <= Q50 <= Q90.
+- Safety Clamps: Never allow leave-by time recommendations to be later than scheduled departure (leave_by <= t_arrive - S), enforcing the Early Departure Guard.
+- Weather Service: Async Open-Meteo client with a strict 2.0-second timeout; always fall back to SQLite weather_fallbacks on failure and tag weather_source = "historical_fallback". Never default to clear weather silently.
+
+## Developer Context
+- The developer is a beginner in Data Science and machine learning.
+- Provide clean, robust, well-commented code.
+- Avoid unnecessary external dependencies or complex abstractions.
+- Never delete or overwrite working files without confirmation.
