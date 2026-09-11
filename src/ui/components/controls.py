@@ -1,65 +1,114 @@
+import sqlite3
 import streamlit as st
 from datetime import datetime, time
+
+DB_PATH = "routetrust.db"
+
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes to avoid hammering SQLite on every rerender
+def load_routes_from_db() -> dict[str, int]:
+    """
+    Dynamically queries the routes_stops table in SQLite and returns a dict
+    mapping human-readable "{route_short_name} — {stop_name}" labels to their row IDs.
+    Falls back to an informative placeholder if the DB is unreachable.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.execute(
+            "SELECT id, route_short_name, stop_name FROM routes_stops ORDER BY route_short_name ASC"
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            return {"No routes found — please seed the database": -1}
+
+        return {
+            f"{route_short_name} — {stop_name}": row_id
+            for row_id, route_short_name, stop_name in rows
+        }
+
+    except Exception as e:
+        return {f"⚠️ Could not load routes: {e}": -1}
+
 
 def render_commuter_controls():
     """
     Renders the commuter input controls in the Streamlit sidebar.
-    Returns a dictionary of the selected values if the user clicks the submit button, 
-    otherwise returns None.
+    Returns a dict payload for the FastAPI /predict endpoint on submit, otherwise None.
+    All labels are written in plain English for everyday commuters.
     """
-    st.sidebar.header("🗓️ Commute Settings")
-    st.sidebar.markdown("Configure your destination and risk tolerance below.")
-    
+    st.sidebar.header("🗓️ Plan My Trip")
+    st.sidebar.markdown("Tell us where you're going and when you need to arrive.")
+
     with st.sidebar.form(key="commute_form"):
-        # Route Stop Mapping based on the database seeds
-        route_options = {
-            "M15-SBS Southbound (2nd Ave & E 34th St)": 1,
-            "B63 Westbound (5th Ave & 9th St)": 2,
-            "Q32 Queens Blvd (Queens Blvd & 48th St)": 3,
-            "BX12-SBS Crosstown (Pelham Pkwy & White Plains)": 4
-        }
-        
-        selected_route_name = st.selectbox(
-            "Select Route & Stop",
-            options=list(route_options.keys()),
-            help="Choose the transit route and destination stop."
+
+        # ── Dynamic Route Selector ──────────────────────────────────────────────
+        route_options = load_routes_from_db()
+        route_labels = list(route_options.keys())
+
+        selected_route_label = st.selectbox(
+            "Your Route & Stop",
+            options=route_labels,
+            help="Select the transit line and the stop you're travelling to.",
         )
-        
-        # Target Arrival Date
+        selected_route_stop_id = route_options.get(selected_route_label, -1)
+
+        # ── Target Arrival Date & Time ──────────────────────────────────────────
         target_arrival_date = st.date_input(
-            "Target Arrival Date",
-            value=datetime.today().date()
+            "Date You're Travelling",
+            value=datetime.today().date(),
         )
-        
-        # Target Arrival Time
+
         target_arrival_time = st.time_input(
-            "Target Arrival Time",
+            "Time You Must Arrive By",
             value=time(9, 0),
-            help="What time do you absolutely need to arrive by?"
+            help="Enter the latest time you can arrive at your destination.",
         )
-        
-        # Risk Appetite / Alpha Slider
+
+        # ── Safety Buffer (alpha) Slider ────────────────────────────────────────
+        # Exposed to users with fully plain-English framing.
+        # Alpha is inverted for display: "Maximum Safety" = low alpha.
         alpha_val = st.slider(
-            "Risk Tolerance (Alpha)",
+            "How cautious do you want to be?",
             min_value=0.01,
             max_value=0.99,
             value=0.20,
             step=0.01,
-            help="Lower values (e.g. 0.05) mean you are highly intolerant of being late. 0.20 equates to targeting the 80th percentile worst-case delay."
+            help=(
+                "Move this slider to control how much extra time we add as a safety buffer.\n\n"
+                "🛡️ **More Cautious (left)** — We add a bigger time buffer so you're very unlikely to be late.\n"
+                "⚡ **Less Cautious (right)** — We suggest a tighter departure time with less buffer.\n\n"
+                "The default (20%) gives you a comfortable buffer for most commutes."
+            ),
         )
-        
-        # Form Submission
-        submit_button = st.form_submit_button(label="Calculate Leave-By")
-        
+
+        # ── Display plain-English preview of the safety level ──────────────────
+        if alpha_val <= 0.10:
+            st.caption("🛡️ **Maximum caution** — Ideal if being late is not an option.")
+        elif alpha_val <= 0.25:
+            st.caption("✅ **Comfortable buffer** — Good for most daily commutes.")
+        elif alpha_val <= 0.50:
+            st.caption("⚡ **Lean schedule** — Works well on reliable, low-delay routes.")
+        else:
+            st.caption("⚠️ **Minimal buffer** — Only use this on very predictable routes.")
+
+        # ── Submit ──────────────────────────────────────────────────────────────
+        submit_button = st.form_submit_button(
+            label="🚍 Get My Departure Time",
+            use_container_width=True,
+        )
+
         if submit_button:
-            # Combine the Streamlit date and time widgets into a single ISO datetime string
-            # to be compatible with the FastAPI PredictionRequest schema.
+            if selected_route_stop_id == -1:
+                st.error("Please select a valid route before continuing.")
+                return None
+
             arrival_datetime = datetime.combine(target_arrival_date, target_arrival_time)
-            
             return {
-                "route_stop_id": route_options[selected_route_name],
+                "route_stop_id": selected_route_stop_id,
                 "target_arrival_time": arrival_datetime.isoformat(),
-                "alpha": alpha_val
+                "alpha": alpha_val,
             }
-            
+
     return None
