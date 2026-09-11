@@ -14,11 +14,16 @@ def _db_mtime() -> float:
         return 0.0
 
 
+def _fmt(text: str, max_len: int = 34) -> str:
+    """Truncate text with ellipsis if it exceeds max_len characters."""
+    return text if len(text) <= max_len else text[:max_len - 1] + "…"
+
+
 @st.cache_data()
 def load_routes_from_db(db_mtime: float = 0.0) -> dict[str, int]:
     """
     Dynamically queries the routes_stops table in SQLite and returns a dict
-    mapping human-readable "{route_short_name} — {stop_name}" labels to their row IDs.
+    mapping concise human-readable labels to their row IDs.
 
     The db_mtime argument is used purely as a cache-busting key:
     whenever the database file is modified (e.g. after a reseed), the cache
@@ -36,7 +41,9 @@ def load_routes_from_db(db_mtime: float = 0.0) -> dict[str, int]:
             return {"No routes found — please seed the database": -1}
 
         return {
-            f"{route_short_name} — {stop_name}": row_id
+            # Keep label short enough to be fully readable in the sidebar dropdown.
+            # Format: "<Route Name> · <Stop (truncated)>"
+            f"{_fmt(route_short_name, 28)} · {_fmt(stop_name, 22)}": row_id
             for row_id, route_short_name, stop_name in rows
         }
 

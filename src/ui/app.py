@@ -30,29 +30,44 @@ API_ENDPOINT = "http://127.0.0.1:8000/api/v1/predict"
 ADMIN_PASSCODE = "routetrust"  # Simple soft gate; change or remove for production
 
 
-# ── Sidebar: Navigation & Admin Toggle ────────────────────────────────────────
+# ── Sidebar: Admin Toggle ─────────────────────────────────────────────────────
 def render_sidebar_controls() -> bool:
     """
-    Renders the sidebar commuter form and the admin mode toggle.
-    Returns True if admin mode is unlocked.
+    Renders the admin mode toggle at the bottom of the sidebar.
+    Uses session_state so admin mode persists across rerenders and can be
+    explicitly exited via a button.
+    Returns True if admin mode is currently active.
     """
-    admin_mode = False
+    if "admin_mode" not in st.session_state:
+        st.session_state.admin_mode = False
 
-    # Admin Mode toggle — hidden at the bottom of the sidebar to keep UI clean
     with st.sidebar:
         st.sidebar.divider()
-        with st.expander("🔧 Developer Options"):
-            admin_input = st.text_input(
-                "Admin passcode",
-                type="password",
-                placeholder="Enter passcode…",
-                help="Enter the admin passcode to access model diagnostics.",
-            )
-            if admin_input == ADMIN_PASSCODE:
-                admin_mode = True
-                st.success("Admin mode enabled.")
 
-    return admin_mode
+        if st.session_state.admin_mode:
+            # Show active admin badge + exit button
+            st.sidebar.success("🔧 Admin Mode Active")
+            if st.sidebar.button("Exit Admin Mode", use_container_width=True):
+                st.session_state.admin_mode = False
+                st.rerun()
+        else:
+            # Hidden passcode entry inside a collapsed expander
+            with st.expander("🔧 Developer Options"):
+                admin_input = st.text_input(
+                    "Admin passcode",
+                    type="password",
+                    placeholder="Enter passcode…",
+                    help="Enter the admin passcode to access model diagnostics.",
+                    key="admin_passcode_input",
+                )
+                if st.button("Unlock", use_container_width=True):
+                    if admin_input == ADMIN_PASSCODE:
+                        st.session_state.admin_mode = True
+                        st.rerun()
+                    else:
+                        st.error("Incorrect passcode.")
+
+    return st.session_state.admin_mode
 
 
 # ── Commuter Intelligence View ────────────────────────────────────────────────
