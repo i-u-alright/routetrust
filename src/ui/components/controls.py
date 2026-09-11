@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import streamlit as st
 from datetime import datetime, time
@@ -5,17 +6,28 @@ from datetime import datetime, time
 DB_PATH = "routetrust.db"
 
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes to avoid hammering SQLite on every rerender
-def load_routes_from_db() -> dict[str, int]:
+def _db_mtime() -> float:
+    """Return the last-modified timestamp of the DB file, or 0.0 if it doesn't exist."""
+    try:
+        return os.path.getmtime(DB_PATH)
+    except OSError:
+        return 0.0
+
+
+@st.cache_data()
+def load_routes_from_db(db_mtime: float = 0.0) -> dict[str, int]:
     """
     Dynamically queries the routes_stops table in SQLite and returns a dict
     mapping human-readable "{route_short_name} — {stop_name}" labels to their row IDs.
-    Falls back to an informative placeholder if the DB is unreachable.
+
+    The db_mtime argument is used purely as a cache-busting key:
+    whenever the database file is modified (e.g. after a reseed), the cache
+    automatically invalidates and this function re-runs to fetch fresh rows.
     """
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.execute(
-            "SELECT id, route_short_name, stop_name FROM routes_stops ORDER BY route_short_name ASC"
+            "SELECT id, route_short_name, stop_name FROM routes_stops ORDER BY id ASC"
         )
         rows = cursor.fetchall()
         conn.close()
@@ -29,7 +41,7 @@ def load_routes_from_db() -> dict[str, int]:
         }
 
     except Exception as e:
-        return {f"⚠️ Could not load routes: {e}": -1}
+        return {f"Could not load routes: {e}": -1}
 
 
 def render_commuter_controls():
@@ -38,13 +50,13 @@ def render_commuter_controls():
     Returns a dict payload for the FastAPI /predict endpoint on submit, otherwise None.
     All labels are written in plain English for everyday commuters.
     """
-    st.sidebar.header("🗓️ Plan My Trip")
+    st.sidebar.header("Plan My Trip")
     st.sidebar.markdown("Tell us where you're going and when you need to arrive.")
 
     with st.sidebar.form(key="commute_form"):
 
-        # ── Dynamic Route Selector ──────────────────────────────────────────────
-        route_options = load_routes_from_db()
+        # ── Dynamic Route Selector (always fresh from DB) ───────────────────────
+        route_options = load_routes_from_db(db_mtime=_db_mtime())
         route_labels = list(route_options.keys())
 
         selected_route_label = st.selectbox(
