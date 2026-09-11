@@ -118,8 +118,25 @@ def render_decision_card(prediction_data: dict, admin_mode: bool = False):
     # ── 3. Plain-English Metrics Row ───────────────────────────────────────────
     col1, col2, col3 = st.columns(3)
 
-    # Convert spread to a human confidence percentage (inverted: lower spread = higher confidence)
-    confidence_pct = max(0, min(100, round((1 - min(spread, 1.5) / 1.5) * 100)))
+    # Convert spread to a reliability tier (inverted: lower spread = more reliable)
+    reliability_score = max(0, min(100, round((1 - min(spread, 1.5) / 1.5) * 100)))
+
+    # Map score to a plain-English label and emoji
+    if reliability_score >= 75:
+        reliability_label = "Very Consistent ✅"
+        reliability_note = None
+    elif reliability_score >= 55:
+        reliability_label = "Mostly On Time 🟡"
+        reliability_note = None
+    elif reliability_score >= 40:
+        reliability_label = "A Bit Variable 🟠"
+        reliability_note = None
+    elif reliability_score >= 20:
+        reliability_label = "Quite Unpredictable 🔴"
+        reliability_note = "This route has wide, unpredictable delays today. We've added extra buffer time, but plan for flexibility."
+    else:
+        reliability_label = "Very Unpredictable 🚨"
+        reliability_note = "This route has wild, unpredictable delays. Plan for extra travel time and consider leaving even earlier."
 
     with col1:
         st.metric(
@@ -130,13 +147,17 @@ def render_decision_card(prediction_data: dict, admin_mode: bool = False):
 
     with col2:
         st.metric(
-            label="📊 Prediction Confidence",
-            value=f"{confidence_pct}%",
+            label="🗓️ Schedule Reliability",
+            value=reliability_label,
             help=(
-                "How consistent the timing predictions were for this route today. "
-                "Higher means the model is more certain about the result."
+                "How consistent this route's timing tends to be today. "
+                "'Very Consistent' means trains/buses usually run close to schedule. "
+                "'Very Unpredictable' means delays vary a lot — leave earlier to be safe."
             ),
         )
+        # Show plain-English advisory for low-reliability routes — visible to all users
+        if reliability_note:
+            st.caption(f"⚠️ {reliability_note}")
 
     with col3:
         weather_icon = "🌤️ Live conditions" if weather_source == "live" else "📂 Historical avg."
