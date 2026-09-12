@@ -112,6 +112,30 @@ def render_commuter_controls():
         else:
             st.caption("⚠️ **Minimal buffer** — Only use this on very predictable routes.")
 
+        # ── Weather Condition Selector ──────────────────────────────────────────
+        # Maps plain-English labels → API condition keys.
+        # 'Use current conditions' keeps live/fallback weather; all others
+        # substitute calibrated historical presets into the model features.
+        WEATHER_OPTIONS = {
+            "Use current conditions 🌡️": "current",
+            "Clear & Sunny ☀️":          "clear",
+            "Cloudy ⛅":                 "cloudy",
+            "Rainy 🌧️":                  "rainy",
+            "Snowy ❄️":                  "snowy",
+            "Stormy ⛈️":                 "stormy",
+        }
+        selected_weather_label = st.selectbox(
+            "Expected Weather",
+            options=list(WEATHER_OPTIONS.keys()),
+            index=0,
+            help=(
+                "Tell us what the weather will be like during your journey.\n\n"
+                "This feeds directly into the prediction model, so rainy or stormy conditions "
+                "will increase the estimated delay buffer automatically."
+            ),
+        )
+        selected_weather_key = WEATHER_OPTIONS[selected_weather_label]
+
         # ── Submit ──────────────────────────────────────────────────────────────
         submit_button = st.form_submit_button(
             label="🚍 Get My Departure Time",
@@ -128,6 +152,7 @@ def render_commuter_controls():
                 "route_stop_id": selected_route_stop_id,
                 "target_arrival_time": arrival_datetime.isoformat(),
                 "alpha": alpha_val,
+                "weather_condition": selected_weather_key,
             }
 
     return None

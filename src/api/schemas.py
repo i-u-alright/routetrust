@@ -16,6 +16,13 @@ class PredictionRequest(BaseModel):
         le=0.99, 
         description="Risk tolerance factor for the prediction. Lower means less tolerance for being late (more conservative)."
     )
+    weather_condition: str = Field(
+        default="current",
+        description=(
+            "User-selected weather scenario passed from the UI: "
+            "'current' (use live/fallback), 'clear', 'cloudy', 'rainy', 'snowy', 'stormy'."
+        )
+    )
 
 
 class MonotonicQuantilesSchema(BaseModel):
@@ -60,7 +67,11 @@ class PredictionResponse(BaseModel):
     )
     weather_source: str = Field(
         ..., 
-        description="The source of the weather data injected into the model ('live' or 'sqlite_fallback')."
+        description="The source of the weather data injected into the model ('live', 'sqlite_fallback', or a user-selected condition label)."
+    )
+    weather_condition: str = Field(
+        default="current",
+        description="The weather condition label echoed back from the request (e.g. 'Clear', 'Rainy')."
     )
     guard_triggered: bool = Field(
         ..., 

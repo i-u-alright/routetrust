@@ -64,9 +64,20 @@ def render_decision_card(prediction_data: dict, admin_mode: bool = False):
     risk_delay_sec = prediction_data.get("risk_delay_sec", 0.0)
     spread = prediction_data.get("interquantile_spread", 0.0)
     weather_source = prediction_data.get("weather_source", "")
+    weather_condition = prediction_data.get("weather_condition", "current")
     low_confidence = prediction_data.get("low_confidence_flag", False)
     latency_ms = prediction_data.get("latency_ms", 0.0)
     quantiles = prediction_data.get("monotonic_quantiles", {})
+
+    # Map condition key back to a user-friendly display label
+    CONDITION_DISPLAY = {
+        "current": None,         # fall through to source-based label
+        "clear":   "Clear & Sunny ☀️",
+        "cloudy":  "Cloudy ⛅",
+        "rainy":   "Rainy 🌧️",
+        "snowy":   "Snowy ❄️",
+        "stormy":  "Stormy ⛈️",
+    }
 
     grade_label, color = GRADE_META.get(grade, ("Unknown", "gray"))
 
@@ -160,11 +171,24 @@ def render_decision_card(prediction_data: dict, admin_mode: bool = False):
             st.caption(f"⚠️ {reliability_note}")
 
     with col3:
-        weather_icon = "🌤️ Live conditions" if weather_source == "live" else "📂 Historical avg."
+        # Use the echoed condition label if a preset was chosen;
+        # fall back to whether live or historical data was used.
+        condition_key = (weather_condition or "current").strip().lower()
+        preset_label = CONDITION_DISPLAY.get(condition_key)          # None for 'current'
+        if preset_label:
+            weather_display = preset_label
+            weather_help = "Weather preset you selected — fed directly into the prediction model."
+        elif weather_source == "live":
+            weather_display = "🌤️ Live conditions"
+            weather_help = "Today's real-time weather was fetched and used in the prediction."
+        else:
+            weather_display = "📂 Historical avg."
+            weather_help = "Live weather was unavailable; historical averages were used instead."
+
         st.metric(
-            label="🌦️ Weather Data",
-            value=weather_icon,
-            help="Whether today's weather was fetched in real time or estimated from historical averages.",
+            label="🌦️ Weather",
+            value=weather_display,
+            help=weather_help,
         )
 
     # ── 4. Delay Range (plain language) ────────────────────────────────────────
