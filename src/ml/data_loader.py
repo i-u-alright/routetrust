@@ -138,8 +138,11 @@ def generate_augmented_observations(row: pd.Series, rng: np.random.Generator) ->
     Given one punctuality data row (year, month, segment, on_time_pct),
     generate SAMPLES_PER_CELL synthetic observations with:
       - Realistic hour/day distribution for transit commute patterns
-      - Zero-inflated weather features
-      - delay_sec drawn from a lognormal centered on the row's mean delay
+      - Condition-stratified weather features (clear/cloudy/rainy/snowy/stormy)
+        drawn from per-condition distributions so every UI preset is
+        well-represented in training data.
+      - delay_sec computed with condition-aware impact multipliers so the
+        model genuinely learns the difference between e.g. snow and rain.
     """
     route_stops = SEGMENT_TO_ROUTE_STOPS.get(row["segment"], [])
     if not route_stops:
@@ -164,18 +167,63 @@ def generate_augmented_observations(row: pd.Series, rng: np.random.Generator) ->
     
     day_of_week = rng.integers(0, 7, size=n)
     
-    # Zero-inflated precipitation
-    is_raining = rng.choice([0, 1], size=n, p=[0.78, 0.22])
-    precipitation_mm = is_raining * rng.exponential(scale=2.5, size=n)
+    # ── Weather condition stratification ───────────────────────────────────────
+    # Each observation is assigned one of 5 real-world conditions drawn with
+    # realistic annual frequency weights for Germany (DWD climatology approx).
+    # Seasonal shifts ensure winter months have more snowy samples and summer
+    # has more clear days, matching the real-world calendar.
+    #
+    # This guarantees every condition that appears in the UI preset menu has
+    # been seen many times by the model during training — so the presets are
+    # never extrapolating outside the trained feature space.
+    CONDITION_NAMES = ["clear", "cloudy", "rainy", "snowy", "stormy"]
+    month = row["month"]
+    if month in (12, 1, 2):          # Winter: more snow & cloud
+        cond_weights = [0.15, 0.35, 0.18, 0.22, 0.10]
+    elif month in (3, 4, 10, 11):    # Shoulder: balanced
+        cond_weights = [0.25, 0.35, 0.22, 0.10, 0.08]
+    else:                             # Summer: mostly clear
+        cond_weights = [0.40, 0.35, 0.16, 0.01, 0.08]
     
-    # Temperature: vary by month (Northern Hemisphere approximation)
-    month_temp_offset = -10 + 2.5 * abs(row["month"] - 6.5)  # coldest in Dec/Jan
-    apparent_temperature_c = rng.normal(loc=18.0 - month_temp_offset, scale=4.0, size=n)
+    assigned_conditions = rng.choice(CONDITION_NAMES, size=n, p=cond_weights)
     
-    wind_speed_kmh = np.clip(rng.normal(loc=12.0, scale=5.0, size=n), 2.0, 60.0)
+    # Per-condition distributions for the 3 weather model features.
+    # Format: (precip_scale_mm, temp_mean_c, temp_std, wind_mean, wind_std, precip_prob)
+    CONDITION_SPECS = {
+        "clear":  (0.0,  20.0, 3.5,  8.0, 3.0, 0.00),
+        "cloudy": (0.3,  15.0, 3.5, 14.0, 4.0, 0.20),
+        "rainy":  (4.5,  11.0, 3.0, 22.0, 5.0, 1.00),
+        "snowy":  (2.5,  -2.0, 3.0, 18.0, 5.0, 1.00),  # water-equivalent mm
+        "stormy": (12.0,  8.0, 4.0, 45.0, 8.0, 1.00),
+    }
     
-    # Delay distribution: lognormal around the derived mean
-    # σ is set so high-variance routes (fernverkehr) have fatter tails
+    precipitation_mm       = np.zeros(n)
+    apparent_temperature_c = np.zeros(n)
+    wind_speed_kmh         = np.zeros(n)
+    
+    for cond, (p_scale, t_mean, t_std, w_mean, w_std, p_prob) in CONDITION_SPECS.items():
+        mask = assigned_conditions == cond
+        k = int(mask.sum())
+        if k == 0:
+            continue
+        if p_prob > 0:
+            precipitation_mm[mask] = rng.exponential(scale=p_scale, size=k)
+        apparent_temperature_c[mask] = rng.normal(loc=t_mean, scale=t_std, size=k)
+        wind_speed_kmh[mask] = np.clip(rng.normal(loc=w_mean, scale=w_std, size=k), 2.0, 80.0)
+    
+    # ── Delay model: condition-aware impact multipliers ────────────────────────
+    # Rain and snow both add precipitation-driven delay, but snow also carries
+    # an extra flat penalty (ice on tracks, slower boarding, de-icing stops).
+    # Stormy adds a large disruption surge on top of heavy precipitation.
+    # This teaches the model to genuinely differentiate all 5 conditions.
+    is_snowy  = (assigned_conditions == "snowy").astype(float)
+    is_stormy = (assigned_conditions == "stormy").astype(float)
+    
+    rain_impact  = precipitation_mm * rng.uniform(8, 35, size=n)
+    snow_penalty = is_snowy  * rng.uniform(40, 120, size=n)   # ice/boarding extra (sec)
+    wind_impact  = np.maximum(0, wind_speed_kmh - 15) * rng.uniform(2, 10, size=n)
+    storm_surge  = is_stormy * rng.uniform(60, 180, size=n)   # signal failures / disruptions
+    
     sigma = 0.9 if row["segment"] == "db-fernverkehr" else 0.7
     if mean_delay_sec > 1:
         mu = np.log(max(mean_delay_sec, 10)) - 0.5 * sigma ** 2
@@ -184,25 +232,23 @@ def generate_augmented_observations(row: pd.Series, rng: np.random.Generator) ->
         # Very high punctuality: mostly small negative/zero delays
         base_delay = np.maximum(0, rng.normal(loc=10, scale=30, size=n))
     
-    # Weather adds variance on top: rain × wind interaction
-    weather_impact = precipitation_mm * rng.uniform(8, 40, size=n)
-    wind_impact = np.maximum(0, wind_speed_kmh - 15) * rng.uniform(2, 10, size=n)
-    delay_sec = base_delay + weather_impact + wind_impact
+    delay_sec = base_delay + rain_impact + snow_penalty + wind_impact + storm_surge
     
     observations = pd.DataFrame({
-        "route_stop_id": assigned_stops,
+        "route_stop_id":             assigned_stops,
         "scheduled_travel_time_sec": [SCHEDULED_TRAVEL_TIME_SEC[rs] for rs in assigned_stops],
-        "hour_of_day": hours,
-        "day_of_week": day_of_week,
-        "precipitation_mm": precipitation_mm,
-        "apparent_temperature_c": apparent_temperature_c,
-        "wind_speed_kmh": wind_speed_kmh,
-        "delay_sec": delay_sec,
+        "hour_of_day":               hours,
+        "day_of_week":               day_of_week,
+        "precipitation_mm":          precipitation_mm,
+        "apparent_temperature_c":    apparent_temperature_c,
+        "wind_speed_kmh":            wind_speed_kmh,
+        "delay_sec":                 delay_sec,
         # Provenance metadata
-        "source_year": row["year"],
-        "source_month": row["month"],
-        "source_segment": row["segment"],
+        "source_year":        row["year"],
+        "source_month":       row["month"],
+        "source_segment":     row["segment"],
         "source_on_time_pct": row["on_time_pct"],
+        "weather_condition":  assigned_conditions,
     })
     
     return observations
