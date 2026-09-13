@@ -104,7 +104,7 @@ python -m streamlit run src/ui/app.py
 To access model metrics, latency tracking, and confidence scoring:
 1. Open the Streamlit frontend.
 2. At the bottom of the sidebar, expand the **🔧 Developer Options** tab.
-3. Enter the passcode: `routetrust`.
+3. Enter the administrator passcode.
 4. The system will unlock a detailed diagnostics card on every prediction.
 
 ---
